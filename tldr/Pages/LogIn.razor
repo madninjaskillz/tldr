@@ -1,0 +1,68 @@
+﻿@page "/login"
+@using tldr.Models
+@using System.Security
+@using tldr.Services
+@inject DBService dbservice;
+@inject DialogService DialogService
+@inject SessionService sessionService;
+@inject NavigationManager NavigationManager;
+@code {
+    public string Error;
+    private async Task OnLogin(LoginArgs args)
+    {
+        var userName = args.Username;
+        var passWord = args.Password;
+
+        try
+        {
+            User user = dbservice.GetUser(userName, passWord);
+            if (user == null)
+            {
+                var result = await DialogService.Confirm("Account doesn't exist... Create it?", "New User?", new ConfirmOptions()
+                {
+                    OkButtonText = "Yes",
+                    CancelButtonText = "No",
+
+                });
+
+                if (result is true)
+                {
+                    user = dbservice.CreateUser(userName, passWord);
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            if (user !=null)
+            {
+                sessionService.CurrentSession.LoggedInUser = user;
+                await sessionService.SaveSession();
+                await InvokeAsync(StateHasChanged);
+                NavigationManager.NavigateTo("/");
+
+            }
+            Error = string.Empty;
+        }
+        catch (SecurityException ex)
+        {
+            Error = ex.Message;
+        }
+
+    }
+
+}
+<div class="col-xl-4 p-3">
+    <RadzenCard>
+        <h2 class="mb-4">Login / Signup to  tl;dr</h2>
+        <h3>@Error</h3>
+        <RadzenTemplateForm Data=@("LoginWithRegister")>
+            <RadzenLogin AllowResetPassword="false" 
+                         AllowRegister="false"
+                         Login=@(args => OnLogin(args))
+                         LoginText = "Sign In / Sign Up"
+                          />
+        </RadzenTemplateForm>
+    </RadzenCard>
+</div>

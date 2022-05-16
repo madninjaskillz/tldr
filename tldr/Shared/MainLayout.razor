@@ -1,0 +1,29 @@
+﻿@using System.Diagnostics
+@using tldr.Models
+@using tldr.Services
+@inherits LayoutComponentBase
+
+@inject SessionService sessionService;
+
+<PageTitle>tldr</PageTitle>
+
+<div class="page">
+    <RadzenDialog/>
+    <RadzenNotification/>
+    <RadzenContextMenu/>
+    <RadzenTooltip/>
+    <main>
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code
+{
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await sessionService.EnsureSession(()=>InvokeAsync(StateHasChanged));
+    }
+}

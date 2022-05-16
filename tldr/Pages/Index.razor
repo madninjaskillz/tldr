@@ -1,0 +1,179 @@
+﻿@page "/"
+@using System.Timers;
+@using tldr.Models
+@using tldr.Services
+@inject DBService dbservice;
+
+@inject SessionService sessionService;
+
+<PageTitle>tl;dr</PageTitle>
+<div class="top-row px-4">
+@if (String.IsNullOrWhiteSpace(sessionService?.CurrentSession?.LoggedInUser?.Username))
+{
+    <a href="/login">
+        <span class="oi oi-person" aria-hidden="true"></span> Log In
+    </a>
+}
+else
+{
+    <a href="/login">
+        <span class="oi oi-person" aria-hidden="true"></span> Signed in as @sessionService?.CurrentSession?.LoggedInUser?.Username
+    </a>
+}
+</div>
+<h1>tl;dr</h1>
+<p>
+    Life's Short. Technical books summarized in one sentence.
+</p>
+<input @bind="Search" placeholder="book title or isbn" style="width: 100pc;" @bind:event="oninput" />
+@foreach (var book in DisplayBooks)
+{
+    <RadzenCard class="m-3">
+        <h3 class="h5">@book.Title</h3>
+        <div class="d-flex flex-row">
+            @if (book.ThumbnailUrl != null)
+            {
+                <img src="@book.ThumbnailUrl" class="float-left mr-3" width="200" />
+            }
+            <div>
+                <div>Authors:</div>
+                @foreach (var author in book.Authors)
+                {
+                    <b>@author</b>
+                }
+
+                <div class="mt-3">Reviews</div>
+                @if (sessionService?.CurrentSession?.LoggedInUser != null)
+                {
+                    <h2>@(sessionService?.CurrentSession?.LoggedInUser?.Username)'s tl;dr</h2>
+
+                    @if (book.Review.All(x => x.UserId != sessionService?.CurrentSession?.LoggedInUser.Id))
+                    {
+                        <input @bind="Review" placeholder="tl;dr review" style="width: 50pc;" @bind:event="oninput" />
+                        <button @onclick="()=>SubmitReview(book.Id, Review)">submit</button>
+
+                    }
+                    else
+                    {
+                        <h3>@book.Review.First(x=>x.UserId == sessionService?.CurrentSession?.LoggedInUser.Id).Tldr</h3>
+                        <RadzenRating ReadOnly="true" Value="@GetDynamicReviews(book.Review).First(x=>x.UserId == sessionService?.CurrentSession?.LoggedInUser.Id).Stars" Stars="10"></RadzenRating>
+                    }
+                    <hr />
+                }
+                @if (book.Review != null)
+                {
+                    @foreach (DynamicReview r in GetDynamicReviews(book.Review).Where(x=>sessionService?.CurrentSession?.LoggedInUser == null || x.UserId != sessionService?.CurrentSession?.LoggedInUser.Id))
+                    {
+                        <h2>@(r.Username)'s tl;dr</h2>
+                        <h3>
+
+                            @r.Tldr
+                        </h3>
+                        <h4>
+                            @if (sessionService?.CurrentSession?.LoggedInUser != null)
+                            {
+                                <a @onclick="() => Vote(Models.Vote.Negative, book.Id, r.Id)"><RadzenIcon Icon="arrow_circle_down"/></a>
+                                <a @onclick="() => Vote(Models.Vote.Positive, book.Id, r.Id)"><RadzenIcon Icon="arrow_circle_up"/></a>
+                            } <br/>
+                            <RadzenRating ReadOnly="true" Value="@r.Stars" Stars="10"></RadzenRating>
+                        </h4>
+
+                   
+                        
+                        <br/>
+                    }
+                }
+            </div>
+        </div>
+    </RadzenCard>
+}
+
+@code
+{
+    public List<DynamicReview> GetDynamicReviews(List<Review> reviews) => reviews.Select(review => new DynamicReview
+    {
+        Username = review.Username,
+        Id = review.Id,
+        Votes = review.Votes.ToList(),
+        UserId = review.UserId,
+        BookId = review.BookId,
+        Tldr = review.Tldr,
+        Stars = dbservice.GetVotes(review.BookId, review.Id)
+    }).OrderByDescending(x=>x.Stars).ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await sessionService.EnsureSession(() => InvokeAsync(StateHasChanged));
+        if (DisplayBooks.Count == 0)
+        {
+            DisplayBooks.AddRange(dbservice.GetBooks());
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    Services.OpenLibrarySearchService openLibrary = new Services.OpenLibrarySearchService();
+
+    public void Vote(Vote vote, Guid bookId, Guid reviewId)
+    {
+        dbservice.AddVote(bookId, reviewId, vote, sessionService.CurrentSession.LoggedInUser);
+        InvokeAsync(StateHasChanged);
+    }
+    public void SubmitReview(Guid bookId, string review)
+    {
+        Book book = DisplayBooks.First(x => x.Id == bookId);
+        book.Review = dbservice.AddReview(book, new Review
+            {
+                BookId = book.Id,
+                Id = Guid.NewGuid(),
+                Tldr = review,
+                UserId = sessionService.CurrentSession.LoggedInUser.Id,
+                Username = sessionService.CurrentSession.LoggedInUser.Username,
+                Votes = new List<ReviewVote>()
+            }).Review;
+
+        Review = "";
+    }
+
+    Timer searchTimer = null;
+    public string Review { get; set; }
+    private string search = "";
+    public string Search
+    {
+        get => search;
+        set
+        {
+            search = value;
+            if (searchTimer != null)
+            {
+                searchTimer.Stop();
+            }
+            searchTimer = new Timer();
+            searchTimer.Interval = 500;
+            searchTimer.AutoReset = false;
+            searchTimer.Elapsed += (sender, args) =>
+            {
+                UpdateDisplayBooks();
+            };
+
+            searchTimer.Start();
+
+        }
+    }
+
+    private void UpdateDisplayBooks()
+    {
+        DisplayBooks.Clear();
+        DisplayBooks.AddRange(dbservice.GetBooks(Search).OrderBy(p => p.Review.Count));
+        DisplayBooks.AddRange(openLibrary.SearchForBook(Search).OrderBy(x => x.ThumbnailUrl == null ? 1 : 0).Where(x=>DisplayBooks.All(b=>b.ASIN!=x.ASIN)));
+
+        if (DisplayBooks.Count == 0)
+        {
+            DisplayBooks.AddRange(dbservice.GetBooks());
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    public List<Book> DisplayBooks { get; set; } = new List<Book>();
+
+
+}
+
